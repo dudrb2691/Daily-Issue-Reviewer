@@ -57,7 +57,8 @@ def get_news():
         "🏆 보스턴 스포츠": [
             "https://www.espn.com/espn/rss/nba/news",
             "https://www.espn.com/espn/rss/mlb/news"
-        ]
+        ],
+        "🍿 엔터/가십거리": ["http://rss.cnn.com/rss/cnn_showbiz.rss"]
     }
     
     results = {}
@@ -70,7 +71,6 @@ def get_news():
     return results
 
 def get_category_prefix(title, summary):
-    """기사 제목과 요약본의 영단어를 스캔하여 카테고리 아이콘을 반환합니다."""
     text = (title + " " + summary).lower()
     
     if any(word in text for word in ['market', 'economy', 'stock', 'fed', 'inflation', 'bank', 'business', 'price', 'rates', 'ceo', 'revenue', 'invest']):
@@ -79,7 +79,7 @@ def get_category_prefix(title, summary):
         return "💻 [IT/과학]"
     elif any(word in text for word in ['president', 'election', 'senate', 'house', 'court', 'law', 'biden', 'trump', 'government', 'policy', 'vote', 'congress']):
         return "🏛️ [정치]"
-    elif any(word in text for word in ['movie', 'music', 'star', 'hollywood', 'celebrity', 'actor', 'award', 'netflix', 'singer', 'album']):
+    elif any(word in text for word in ['movie', 'music', 'star', 'hollywood', 'celebrity', 'actor', 'award', 'netflix', 'singer', 'album', 'tour']):
         return "🍿 [엔터]"
     elif any(word in text for word in ['police', 'crime', 'crash', 'shoot', 'killed', 'investigation', 'fire', 'emergency']):
         return "🚨 [사건사고]"
@@ -116,7 +116,7 @@ news_data = get_news()
 tab_names = list(news_data.keys()) + ["🌤️ 보스턴 날씨"]
 tabs = st.tabs(tab_names)
 
-# --- 1~4번째 탭: 뉴스 영역 ---
+# --- 1~5번째 탭: 뉴스 영역 ---
 for idx, (category, entries) in enumerate(news_data.items()):
     with tabs[idx]:
         for entry in entries:
@@ -124,7 +124,6 @@ for idx, (category, entries) in enumerate(news_data.items()):
             link = entry.get('link', '#')
             summary_raw = entry.get('summary', '')
             
-            # 스포츠 탭은 굳이 분류가 필요 없으므로 일반 뉴스 탭에서만 카테고리 아이콘을 붙여줍니다.
             if "스포츠" not in category:
                 prefix = get_category_prefix(title, summary_raw)
                 display_title = f"{prefix} {title}"
@@ -137,8 +136,10 @@ for idx, (category, entries) in enumerate(news_data.items()):
             with col2:
                 btn_key = f"btn_news_{idx}_{title[:15]}_{len(title)}"
                 if st.button("분석", key=btn_key):
-                    with st.spinner("기사 분석 및 유튜브 영상을 찾는 중입니다..."):
+                    with st.spinner("기사 분석 및 배경 지식을 검색하는 중입니다..."):
                         yt_link = get_youtube_link(title)
+                        
+                        # 프롬프트에 '배경 지식' 항목 추가
                         prompt = f"""
                         당신은 보스턴에 파견된 한국인 주재원의 스몰톡을 돕는 AI입니다.
                         다음 뉴스 기사 제목과 내용을 바탕으로 지정된 양식에 맞춰 작성해 줘.
@@ -149,10 +150,16 @@ for idx, (category, entries) in enumerate(news_data.items()):
                         [작성 양식]
                         ### 📝 영문 요약본
                         (기사 내용을 유추하여 2~3문장 영어 요약)
+                        
                         ### 🇰🇷 국문 요약본
                         (위 영문 요약의 한국어 번역)
+                        
+                        ### 💡 뉴스 배경 지식
+                        (이 뉴스를 제대로 이해하기 위해 외국인(한국인)에게 필요한 사전 지식을 2~3문장으로 설명. 등장하는 인물/정치인, 스포츠 팀의 연고지, 기업의 특징, 사건의 역사적 배경 등을 친절하게 알려줄 것)
+                        
                         ### 🗣️ 스몰톡 서두 추천 문구
                         (동료에게 말을 걸 때 쓸 수 있는 자연스러운 영어 아이스브레이커 2개와 뜻)
+                        
                         ### 💬 스몰톡 추천 표현
                         (대화를 이어갈 때 쓸만한 유용한 영어 문장 3개와 뜻)
                         """
@@ -169,7 +176,7 @@ for idx, (category, entries) in enumerate(news_data.items()):
                         st.session_state.show_chat = False
                     st.rerun()
 
-# --- 5번째 탭: 날씨 영역 ---
+# --- 6번째 탭: 날씨 영역 ---
 with tabs[-1]:
     st.subheader("📍 미국 매사추세츠주 보스턴 (Boston, MA)")
     weather_data = get_weather()
