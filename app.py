@@ -18,7 +18,7 @@ except KeyError:
     st.error("오류: Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다.")
     st.stop()
 
-# 챗봇 페르소나 (LG Energy Solution Vertech 동료)
+# 챗봇 페르소나
 persona = """
 You are a friendly American colleague working at LG Energy Solution Vertech in Westborough, MA. 
 The user is a Korean expat engineer with about 4 years of experience who recently joined your team. 
@@ -28,7 +28,6 @@ If the user makes a grammatical error or uses an awkward expression in English, 
 "*Tip: Instead of [User's phrase], you can say [Natural phrase].*"
 """
 
-# 최신 Gemini 3 Flash 모델 적용
 model = genai.GenerativeModel(
     'gemini-3-flash-preview',
     system_instruction=persona
@@ -47,7 +46,7 @@ if "show_chat" not in st.session_state:
     st.session_state.show_chat = False
 
 # ==========================================
-# 3. 보조 함수 (뉴스 수집, 날씨, 유튜브 검색)
+# 3. 보조 함수 (뉴스 수집, 분류, 날씨, 유튜브)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_news():
@@ -70,10 +69,26 @@ def get_news():
         results[category] = combined_entries[:8]
     return results
 
-@st.cache_data(ttl=1800) # 30분마다 날씨 갱신
+def get_category_prefix(title, summary):
+    """기사 제목과 요약본의 영단어를 스캔하여 카테고리 아이콘을 반환합니다."""
+    text = (title + " " + summary).lower()
+    
+    if any(word in text for word in ['market', 'economy', 'stock', 'fed', 'inflation', 'bank', 'business', 'price', 'rates', 'ceo', 'revenue', 'invest']):
+        return "📈 [경제]"
+    elif any(word in text for word in ['tech', 'apple', 'google', 'alphabet', 'microsoft', 'ai', 'software', 'space', 'nasa', 'science', 'nvidia', 'tsmc', 'chip']):
+        return "💻 [IT/과학]"
+    elif any(word in text for word in ['president', 'election', 'senate', 'house', 'court', 'law', 'biden', 'trump', 'government', 'policy', 'vote', 'congress']):
+        return "🏛️ [정치]"
+    elif any(word in text for word in ['movie', 'music', 'star', 'hollywood', 'celebrity', 'actor', 'award', 'netflix', 'singer', 'album']):
+        return "🍿 [엔터]"
+    elif any(word in text for word in ['police', 'crime', 'crash', 'shoot', 'killed', 'investigation', 'fire', 'emergency']):
+        return "🚨 [사건사고]"
+    else:
+        return "📰 [일반]"
+
+@st.cache_data(ttl=1800)
 def get_weather():
     try:
-        # 보스턴 실시간 기온 데이터 호출 (무료 API)
         url = "https://api.open-meteo.com/v1/forecast?latitude=42.3601&longitude=-71.0589&current=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=America%2FNew_York"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
@@ -98,8 +113,6 @@ st.title("🇺🇸 보스턴 출근길 스몰톡 도우미")
 st.markdown("오늘의 지역 가십거리와 날씨를 파악하고 동료들과 자연스럽게 대화해 보세요!")
 
 news_data = get_news()
-
-# 기존 뉴스 탭에 '보스턴 날씨' 탭 추가
 tab_names = list(news_data.keys()) + ["🌤️ 보스턴 날씨"]
 tabs = st.tabs(tab_names)
 
@@ -111,9 +124,16 @@ for idx, (category, entries) in enumerate(news_data.items()):
             link = entry.get('link', '#')
             summary_raw = entry.get('summary', '')
             
+            # 스포츠 탭은 굳이 분류가 필요 없으므로 일반 뉴스 탭에서만 카테고리 아이콘을 붙여줍니다.
+            if "스포츠" not in category:
+                prefix = get_category_prefix(title, summary_raw)
+                display_title = f"{prefix} {title}"
+            else:
+                display_title = f"🏅 {title}"
+            
             col1, col2 = st.columns([4, 1])
             with col1:
-                st.write(f"**{title}**")
+                st.write(f"**{display_title}**")
             with col2:
                 btn_key = f"btn_news_{idx}_{title[:15]}_{len(title)}"
                 if st.button("분석", key=btn_key):
@@ -138,13 +158,13 @@ for idx, (category, entries) in enumerate(news_data.items()):
                         """
                         response = model.generate_content(prompt)
                         st.session_state.selected_article = {
-                            "title": title, "link": link, "yt_link": yt_link, "ai_analysis": response.text
+                            "title": display_title, "link": link, "yt_link": yt_link, "ai_analysis": response.text
                         }
                         
                         st.session_state.messages = []
                         st.session_state.chat_session = model.start_chat(history=[
                             {"role": "user", "parts": [f"Let's talk about this news topic: {title}"]},
-                            {"role": "model", "parts": [f"Sure! I saw that headline about '{title}' too. What do you think about it?"]}
+                            {"role": "model", "parts": [f"Sure! I saw that headline. What do you think about it?"]}
                         ])
                         st.session_state.show_chat = False
                     st.rerun()
@@ -159,41 +179,43 @@ with tabs[-1]:
         max_temp = weather_data.get('daily', {}).get('temperature_2m_max', ['N/A'])[0]
         min_temp = weather_data.get('daily', {}).get('temperature_2m_min', ['N/A'])[0]
 
-        st.markdown(f"#### 🌡️ **현재 기온:** {current_temp}°C &nbsp;&nbsp;|&nbsp;&nbsp; 🔼 **최고:** {max_temp}°C &nbsp;&nbsp;|&nbsp;&nbsp; 🔽 **최저:** {min_temp}°C")
-        st.write("")
-        
-        if st.button("💬 이 날씨로 스몰톡 준비", use_container_width=True):
-            with st.spinner("날씨 기반 스몰톡 표현을 준비 중입니다..."):
-                prompt = f"""
-                당신은 보스턴에 파견된 한국인 주재원의 스몰톡을 돕는 AI입니다.
-                현재 보스턴의 날씨 데이터(현재 {current_temp}도, 최고 {max_temp}도, 최저 {min_temp}도)를 바탕으로 작성해 줘.
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.markdown(f"#### 🌡️ **현재 기온:** {current_temp}°C &nbsp;&nbsp;|&nbsp;&nbsp; 🔼 **최고:** {max_temp}°C &nbsp;&nbsp;|&nbsp;&nbsp; 🔽 **최저:** {min_temp}°C")
+            
+        with col2:
+            if st.button("분석", key="btn_weather_analysis"):
+                with st.spinner("날씨 기반 스몰톡 표현을 준비 중입니다..."):
+                    prompt = f"""
+                    당신은 보스턴에 파견된 한국인 주재원의 스몰톡을 돕는 AI입니다.
+                    현재 보스턴의 날씨 데이터(현재 {current_temp}도, 최고 {max_temp}도, 최저 {min_temp}도)를 바탕으로 작성해 줘.
 
-                [작성 양식]
-                ### 🌤️ 날씨 상황
-                (현재 보스턴 날씨의 체감이나 특징을 1~2문장으로 요약)
-                
-                ### 🗣️ 스몰톡 서두 추천 문구
-                (동료에게 날씨로 말을 걸 때 쓸 수 있는 자연스러운 영어 아이스브레이커 2개와 한국어 뜻)
-                
-                ### 💬 대화 이어가기
-                (이어서 주말 계획이나 점심 메뉴 등으로 화제를 부드럽게 전환하는 유용한 영어 문장 2개와 한국어 뜻)
-                """
-                response = model.generate_content(prompt)
-                
-                st.session_state.selected_article = {
-                    "title": f"오늘의 보스턴 날씨 (현재 {current_temp}°C)",
-                    "link": "https://weather.com/weather/today/l/42.36,-71.06",
-                    "yt_link": None,
-                    "ai_analysis": response.text
-                }
-                
-                st.session_state.messages = []
-                st.session_state.chat_session = model.start_chat(history=[
-                    {"role": "user", "parts": [f"Let's talk about the weather in Boston today. It's around {current_temp} degrees Celsius."]},
-                    {"role": "model", "parts": ["Yeah, the weather today is interesting! How are you finding the Boston weather so far?"]}
-                ])
-                st.session_state.show_chat = False
-            st.rerun()
+                    [작성 양식]
+                    ### 🌤️ 날씨 상황
+                    (현재 보스턴 날씨의 체감이나 특징을 1~2문장으로 요약)
+                    
+                    ### 🗣️ 스몰톡 서두 추천 문구
+                    (동료에게 날씨로 말을 걸 때 쓸 수 있는 자연스러운 영어 아이스브레이커 2개와 한국어 뜻)
+                    
+                    ### 💬 대화 이어가기
+                    (이어서 주말 계획이나 점심 메뉴 등으로 화제를 부드럽게 전환하는 유용한 영어 문장 2개와 한국어 뜻)
+                    """
+                    response = model.generate_content(prompt)
+                    
+                    st.session_state.selected_article = {
+                        "title": f"🌤️ 오늘의 보스턴 날씨 (현재 {current_temp}°C)",
+                        "link": "https://weather.com/weather/today/l/42.36,-71.06",
+                        "yt_link": None,
+                        "ai_analysis": response.text
+                    }
+                    
+                    st.session_state.messages = []
+                    st.session_state.chat_session = model.start_chat(history=[
+                        {"role": "user", "parts": [f"Let's talk about the weather in Boston today. It's around {current_temp} degrees Celsius."]},
+                        {"role": "model", "parts": ["Yeah, the weather today is interesting! How are you finding the Boston weather so far?"]}
+                    ])
+                    st.session_state.show_chat = False
+                st.rerun()
     else:
         st.error("날씨 정보를 불러올 수 없습니다.")
 
