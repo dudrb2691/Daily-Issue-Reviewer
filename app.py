@@ -28,9 +28,9 @@ If the user makes a grammatical error or uses an awkward expression in English, 
 "*Tip: Instead of [User's phrase], you can say [Natural phrase].*"
 """
 
-# 에러 해결: 범용적으로 매핑되는 latest 태그 사용
+# 최신 Gemini 3 Flash 모델 적용
 model = genai.GenerativeModel(
-    'gemini-1.5-flash-latest',
+    'gemini-3-flash-preview',
     system_instruction=persona
 )
 
