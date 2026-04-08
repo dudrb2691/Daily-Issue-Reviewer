@@ -2,3 +2,4 @@ streamlit
 google-generativeai
 feedparser
 streamlit-mic-recorder
+youtube-search-python
