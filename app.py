@@ -161,4 +161,8 @@ if st.session_state.current_topic:
         with st.spinner("동료가 대답을 생각하고 있습니다..."):
             response = st.session_state.chat_session.send_message(user_input)
                 
-        st.session_state.messages.append({"
+        st.session_state.messages.append({"role": "assistant", "content": response.text})
+        st.rerun()
+
+else:
+    st.info("👆 위에서 뉴스를 선택하고 '스몰톡 준비' 버튼을 누르면 영어 대화를 시작할 수 있습니다.")
