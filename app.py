@@ -52,18 +52,17 @@ if "show_chat" not in st.session_state:
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_news():
-    # 사용자가 요청한 미국의 주요 언론사 10곳 모두 추가
     feeds = {
         "🌎 미국 주요 뉴스": [
-            "http://rss.cnn.com/rss/cnn_topstories.rss",                   # CNN
-            "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", # NYT
-            "http://feeds.foxnews.com/foxnews/latest",                     # Fox News
-            "https://feeds.washingtonpost.com/rss/national",               # 워싱턴 포스트 (WP)
-            "https://feeds.a.dj.com/rss/RSSWorldNews.xml",                 # 월스트리트 저널 (WSJ)
-            "https://feeds.nbcnews.com/nbcnews/public/news",               # NBC
-            "https://www.cbsnews.com/latest/rss/main",                     # CBS
-            "https://abcnews.go.com/abcnews/topstories",                   # ABC
-            "https://feeds.npr.org/1001/rss.xml"                           # NPR (공영 라디오)
+            "http://rss.cnn.com/rss/cnn_topstories.rss",
+            "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+            "http://feeds.foxnews.com/foxnews/latest",
+            "https://feeds.washingtonpost.com/rss/national",
+            "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+            "https://feeds.nbcnews.com/nbcnews/public/news",
+            "https://www.cbsnews.com/latest/rss/main",
+            "https://abcnews.go.com/abcnews/topstories",
+            "https://feeds.npr.org/1001/rss.xml"
         ],
         "🏅 미국 주요 스포츠": [
             "https://www.espn.com/espn/rss/news"
@@ -91,7 +90,6 @@ def get_news():
         for url in urls:
             parsed = feedparser.parse(url)
             for entry in parsed.entries:
-                # 일주일 지난 옛날 기사 필터링
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
                     if pub_date < one_week_ago:
@@ -100,23 +98,19 @@ def get_news():
                 entry['source_url'] = url
                 combined_entries.append(entry)
                 
-        # 최신 시간순 정렬
         combined_entries.sort(
             key=lambda x: x.get('published_parsed') or time.localtime(0), 
             reverse=True
         )
         
-        # 기사 개수를 9개에서 21개로 대폭 확장
         results[category] = combined_entries[:21]
         
     return results
 
 def get_category_prefix(title, summary, category_name, article_link="", source_url=""):
-    """언론사 도메인을 스캔하여 라벨을 붙입니다."""
     link_lower = (article_link + " " + source_url).lower()
     text = (title + " " + summary).lower()
     
-    # 10대 언론사 태그 추출
     source_tag = ""
     if "nytimes.com" in link_lower: source_tag = "[NYT] "
     elif "foxnews.com" in link_lower: source_tag = "[Fox] "
@@ -129,7 +123,6 @@ def get_category_prefix(title, summary, category_name, article_link="", source_u
     elif "npr.org" in link_lower: source_tag = "[NPR] "
     elif "apnews.com" in link_lower: source_tag = "[AP] "
     
-    # 스포츠 카테고리
     if "스포츠" in category_name:
         if 'nba' in link_lower or 'basketball' in text: return f"🏀 {source_tag}[NBA]"
         if 'mlb' in link_lower or 'baseball' in text: return f"⚾ {source_tag}[MLB]"
@@ -139,7 +132,6 @@ def get_category_prefix(title, summary, category_name, article_link="", source_u
         if 'soccer' in link_lower or 'fc' in text or 'premier league' in text: return f"⚽ {source_tag}[축구]"
         return f"🏅 {source_tag}[스포츠 종합]"
     
-    # 일반 뉴스 카테고리
     if any(word in text for word in ['market', 'economy', 'stock', 'fed', 'inflation', 'bank', 'business', 'price', 'rates', 'ceo', 'revenue', 'invest']):
         return f"📈 {source_tag}[경제]"
     elif any(word in text for word in ['tech', 'apple', 'google', 'alphabet', 'microsoft', 'ai', 'software', 'space', 'nasa', 'science', 'nvidia', 'tsmc', 'chip']):
@@ -226,18 +218,17 @@ for idx, (category, entries) in enumerate(news_data.items()):
                 with st.container(border=True):
                     title = entry.get('title', '제목 없음')
                     link = entry.get('link', '#')
-                    summary_raw = str(entry.get('summary', '') or '')
+                    summary_raw = entry.get('summary', '')
                     source_url = entry.get('source_url', '')
                     img_url = get_image_url(entry)
                     
                     st.image(img_url, use_container_width=True)
                     
-                    # 제목에 언론사 태그가 함께 출력됩니다.
                     prefix = get_category_prefix(title, summary_raw, category, link, source_url)
                     display_title = f"{prefix} {title}"
                     
-                    short_title = display_title if len(display_title) < 60 else display_title[:57] + "..."
-                    st.markdown(f"**{short_title}**")
+                    # 💡 수정된 부분: 말줄임표(...) 제한을 없애고 제목 전체를 보여줍니다.
+                    st.markdown(f"**{display_title}**")
                     
                     btn_key = f"btn_news_{idx}_{i}_{title[:10]}"
                     if st.button("분석 💬", key=btn_key, use_container_width=True):
