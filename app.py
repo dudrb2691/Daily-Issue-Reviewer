@@ -186,7 +186,7 @@ for idx, (category, entries) in enumerate(news_data.items()):
                     summary_raw = str(entry.get('summary', ''))
                     
                     # 👈 업그레이드된 이미지 추출 함수 적용
-                    img_url = get_image_url(entry, summary_raw)
+                    img_url = get_image_url(entry)
                     
                     st.image(img_url, use_container_width=True)
                     
