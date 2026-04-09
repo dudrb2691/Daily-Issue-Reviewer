@@ -5,7 +5,8 @@ from youtubesearchpython import VideosSearch
 from streamlit_mic_recorder import speech_to_text
 import urllib.request
 import json
-import re  # 👈 숨겨진 이미지를 찾기 위한 라이브러리 추가
+from datetime import datetime, timedelta
+import time
 
 # ==========================================
 # 1. 초기 설정 및 API 키 불러오기
@@ -47,91 +48,134 @@ if "show_chat" not in st.session_state:
     st.session_state.show_chat = False
 
 # ==========================================
-# 4. 보조 함수 (뉴스 수집, 분류, 이미지 추출)
+# 4. 보조 함수 (최신 뉴스 수집, 분류, 이미지)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_news():
+    # 사용자가 요청한 미국의 주요 언론사 10곳 모두 추가
     feeds = {
-        "🌎 미국 주요 뉴스": ["http://rss.cnn.com/rss/cnn_topstories.rss"],
-        "🏅 미국 주요 스포츠": ["https://www.espn.com/espn/rss/news"],
-        "📰 보스턴 지역 뉴스": ["https://www.wcvb.com/topstories-rss"],
+        "🌎 미국 주요 뉴스": [
+            "http://rss.cnn.com/rss/cnn_topstories.rss",                   # CNN
+            "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml", # NYT
+            "http://feeds.foxnews.com/foxnews/latest",                     # Fox News
+            "https://feeds.washingtonpost.com/rss/national",               # 워싱턴 포스트 (WP)
+            "https://feeds.a.dj.com/rss/RSSWorldNews.xml",                 # 월스트리트 저널 (WSJ)
+            "https://feeds.nbcnews.com/nbcnews/public/news",               # NBC
+            "https://www.cbsnews.com/latest/rss/main",                     # CBS
+            "https://abcnews.go.com/abcnews/topstories",                   # ABC
+            "https://feeds.npr.org/1001/rss.xml"                           # NPR (공영 라디오)
+        ],
+        "🏅 미국 주요 스포츠": [
+            "https://www.espn.com/espn/rss/news"
+        ],
+        "📰 보스턴 지역 뉴스": [
+            "https://www.wcvb.com/topstories-rss",
+            "https://whdh.com/feed/"
+        ],
         "🏆 보스턴 스포츠": [
             "https://www.espn.com/espn/rss/nba/news",
             "https://www.espn.com/espn/rss/mlb/news",
             "https://www.espn.com/espn/rss/nfl/news"
         ],
-        "🍿 엔터/가십거리": ["http://rss.cnn.com/rss/cnn_showbiz.rss"]
+        "🍿 엔터/가십거리": [
+            "http://rss.cnn.com/rss/cnn_showbiz.rss",
+            "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml"
+        ]
     }
     
     results = {}
+    one_week_ago = datetime.now() - timedelta(days=7)
+    
     for category, urls in feeds.items():
         combined_entries = []
         for url in urls:
             parsed = feedparser.parse(url)
-            combined_entries.extend(parsed.entries[:10]) 
-        results[category] = combined_entries[:9]
+            for entry in parsed.entries:
+                # 일주일 지난 옛날 기사 필터링
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                    if pub_date < one_week_ago:
+                        continue 
+                
+                entry['source_url'] = url
+                combined_entries.append(entry)
+                
+        # 최신 시간순 정렬
+        combined_entries.sort(
+            key=lambda x: x.get('published_parsed') or time.localtime(0), 
+            reverse=True
+        )
+        
+        # 기사 개수를 9개에서 21개로 대폭 확장
+        results[category] = combined_entries[:21]
+        
     return results
 
-def get_category_prefix(title, summary, category_name, article_link=""):
-    if "스포츠" in category_name:
-        link_lower = article_link.lower()
-        text_lower = (title + " " + summary).lower()
-        
-        if 'nba' in link_lower or 'basketball' in text_lower: return "🏀 [NBA]"
-        if 'mlb' in link_lower or 'baseball' in text_lower: return "⚾ [MLB]"
-        if 'nfl' in link_lower or 'football' in text_lower: return "🏈 [NFL]"
-        if 'nhl' in link_lower or 'hockey' in text_lower: return "🏒 [NHL]"
-        if 'golf' in link_lower or 'masters' in text_lower or 'pga' in text_lower: return "⛳ [골프]"
-        if 'soccer' in link_lower or 'fc' in text_lower or 'premier league' in text_lower: return "⚽ [축구]"
-        return "🏅 [스포츠 종합]"
-    
+def get_category_prefix(title, summary, category_name, article_link="", source_url=""):
+    """언론사 도메인을 스캔하여 라벨을 붙입니다."""
+    link_lower = (article_link + " " + source_url).lower()
     text = (title + " " + summary).lower()
+    
+    # 10대 언론사 태그 추출
+    source_tag = ""
+    if "nytimes.com" in link_lower: source_tag = "[NYT] "
+    elif "foxnews.com" in link_lower: source_tag = "[Fox] "
+    elif "cnn.com" in link_lower: source_tag = "[CNN] "
+    elif "washingtonpost.com" in link_lower: source_tag = "[WP] "
+    elif "wsj.com" in link_lower or "dj.com" in link_lower: source_tag = "[WSJ] "
+    elif "nbcnews.com" in link_lower: source_tag = "[NBC] "
+    elif "cbsnews.com" in link_lower: source_tag = "[CBS] "
+    elif "abcnews" in link_lower: source_tag = "[ABC] "
+    elif "npr.org" in link_lower: source_tag = "[NPR] "
+    elif "apnews.com" in link_lower: source_tag = "[AP] "
+    
+    # 스포츠 카테고리
+    if "스포츠" in category_name:
+        if 'nba' in link_lower or 'basketball' in text: return f"🏀 {source_tag}[NBA]"
+        if 'mlb' in link_lower or 'baseball' in text: return f"⚾ {source_tag}[MLB]"
+        if 'nfl' in link_lower or 'football' in text: return f"🏈 {source_tag}[NFL]"
+        if 'nhl' in link_lower or 'hockey' in text: return f"🏒 {source_tag}[NHL]"
+        if 'golf' in link_lower or 'masters' in text or 'pga' in text: return f"⛳ {source_tag}[골프]"
+        if 'soccer' in link_lower or 'fc' in text or 'premier league' in text: return f"⚽ {source_tag}[축구]"
+        return f"🏅 {source_tag}[스포츠 종합]"
+    
+    # 일반 뉴스 카테고리
     if any(word in text for word in ['market', 'economy', 'stock', 'fed', 'inflation', 'bank', 'business', 'price', 'rates', 'ceo', 'revenue', 'invest']):
-        return "📈 [경제]"
+        return f"📈 {source_tag}[경제]"
     elif any(word in text for word in ['tech', 'apple', 'google', 'alphabet', 'microsoft', 'ai', 'software', 'space', 'nasa', 'science', 'nvidia', 'tsmc', 'chip']):
-        return "💻 [IT/과학]"
+        return f"💻 {source_tag}[IT/과학]"
     elif any(word in text for word in ['president', 'election', 'senate', 'house', 'court', 'law', 'biden', 'trump', 'government', 'policy', 'vote', 'congress']):
-        return "🏛️ [정치]"
+        return f"🏛️ {source_tag}[정치]"
     elif any(word in text for word in ['movie', 'music', 'star', 'hollywood', 'celebrity', 'actor', 'award', 'netflix', 'singer', 'album', 'tour']):
-        return "🍿 [엔터]"
+        return f"🍿 {source_tag}[엔터]"
     elif any(word in text for word in ['police', 'crime', 'crash', 'shoot', 'killed', 'investigation', 'fire', 'emergency']):
-        return "🚨 [사건사고]"
+        return f"🚨 {source_tag}[사건사고]"
     else:
-        return "📰 [일반]"
+        return f"📰 {source_tag}[일반]"
 
 def get_image_url(entry):
-    """더 다양한 태그를 스캔하고 파라미터를 제거하여 액박을 방지합니다."""
     fallback_img = "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80"
-    
     img_candidates = []
 
-    # 1. media_content 태그 확인
     if 'media_content' in entry:
         for content in entry.media_content:
             if 'url' in content:
                 img_candidates.append(content['url'])
                 
-    # 2. media_thumbnail 태그 확인
     if 'media_thumbnail' in entry:
         for thumb in entry.media_thumbnail:
             if 'url' in thumb:
                 img_candidates.append(thumb['url'])
 
-    # 3. links 항목에서 이미지 타입 확인 (엔터 탭 해결책)
     if 'links' in entry:
         for link in entry.links:
             if 'image' in link.get('type', ''):
                 img_candidates.append(link.get('href', ''))
 
-    # 후보군 검사
     for url in img_candidates:
         if not url: continue
-        
-        # 주소 뒤의 쿼리 파라미터(?...) 제거하여 순수 확장자 추출
         clean_url = url.split('?')[0].lower()
-        
         if any(ext in clean_url for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
-            # 상대 경로 방지: http로 시작하는지 확인
             if url.startswith('http'):
                 return url
                 
@@ -182,15 +226,14 @@ for idx, (category, entries) in enumerate(news_data.items()):
                 with st.container(border=True):
                     title = entry.get('title', '제목 없음')
                     link = entry.get('link', '#')
-                    # 요약본 데이터 정제
-                    summary_raw = str(entry.get('summary', ''))
-                    
-                    # 👈 업그레이드된 이미지 추출 함수 적용
+                    summary_raw = str(entry.get('summary', '') or '')
+                    source_url = entry.get('source_url', '')
                     img_url = get_image_url(entry)
                     
                     st.image(img_url, use_container_width=True)
                     
-                    prefix = get_category_prefix(title, summary_raw, category, link)
+                    # 제목에 언론사 태그가 함께 출력됩니다.
+                    prefix = get_category_prefix(title, summary_raw, category, link, source_url)
                     display_title = f"{prefix} {title}"
                     
                     short_title = display_title if len(display_title) < 60 else display_title[:57] + "..."
