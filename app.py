@@ -5,6 +5,7 @@ from youtubesearchpython import VideosSearch
 from streamlit_mic_recorder import speech_to_text
 import urllib.request
 import json
+import re  # 👈 숨겨진 이미지를 찾기 위한 라이브러리 추가
 
 # ==========================================
 # 1. 초기 설정 및 API 키 불러오기
@@ -19,12 +20,10 @@ except KeyError:
     st.stop()
 
 # ==========================================
-# 2. AI 모델 분리 (매우 중요: 요약용 vs 채팅용)
+# 2. AI 모델 분리 (요약용 vs 채팅용)
 # ==========================================
-# [AI 1] 요약/분석 담당: 페르소나 없이 지시받은 양식만 딱딱하게 출력하는 모델
 analyzer_model = genai.GenerativeModel('gemini-3-flash-preview')
 
-# [AI 2] 채팅 담당: 친근한 동료 역할극을 수행하는 모델
 persona = """
 You are a friendly American colleague working at LG Energy Solution Vertech in Westborough, MA. 
 The user is a Korean expat engineer with about 4 years of experience who recently joined your team. 
@@ -43,7 +42,7 @@ if "messages" not in st.session_state:
 if "selected_article" not in st.session_state:
     st.session_state.selected_article = None
 if "chat_session" not in st.session_state:
-    st.session_state.chat_session = chat_model.start_chat(history=[]) # 채팅용 모델로 초기화
+    st.session_state.chat_session = chat_model.start_chat(history=[]) 
 if "show_chat" not in st.session_state:
     st.session_state.show_chat = False
 
@@ -74,7 +73,6 @@ def get_news():
     return results
 
 def get_category_prefix(title, summary, category_name, article_link=""):
-    """기사 링크와 제목을 분석하여 더 정확한 카테고리를 찾아냅니다."""
     if "스포츠" in category_name:
         link_lower = article_link.lower()
         text_lower = (title + " " + summary).lower()
@@ -101,23 +99,43 @@ def get_category_prefix(title, summary, category_name, article_link=""):
     else:
         return "📰 [일반]"
 
-def get_image_url(entry):
-    """RSS 피드에서 이미지 주소를 안전하게 추출하고, 없거나 동영상이면 기본 이미지를 띄웁니다."""
-    fallback_img = "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80" # 깔끔한 신문/커피 기본 이미지
+def get_image_url(entry, summary_raw):
+    """
+    동영상 대기 화면, 본문 숨김 이미지까지 모두 찾아내는 업그레이드된 함수입니다.
+    """
+    fallback_img = "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80"
     
     try:
-        # media_content 확인 (확장자가 이미지 형식일 때만 통과)
-        if 'media_content' in entry and len(entry.media_content) > 0:
-            url = entry.media_content[0].get('url', '')
-            if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
-                return url
-        
-        # media_thumbnail 확인
+        # 1. 미디어 썸네일 확인 (CNN 등이 자주 사용)
         if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
-            url = entry.media_thumbnail[0].get('url', '')
-            if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
-                return url
-                
+            return entry.media_thumbnail[0].get('url', fallback_img)
+            
+        # 2. 미디어 콘텐츠 확인
+        if 'media_content' in entry and len(entry.media_content) > 0:
+            for media in entry.media_content:
+                # 동영상이더라도 url이 있으면 썸네일일 확률이 높음
+                url = media.get('url', '')
+                if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
+                    return url
+
+        # 3. 인클로저 확인 (동영상 포스터 이미지가 주로 이곳에 담김)
+        if 'enclosures' in entry:
+            for enc in entry.enclosures:
+                href = enc.get('href', '')
+                if 'image' in enc.get('type', '') or any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                    return href
+                    
+        # 4. 링크 속성 확인
+        if 'links' in entry:
+            for link in entry.links:
+                if 'image' in link.get('type', ''):
+                    return link.get('href', fallback_img)
+
+        # 5. [강력 기능] 기사 본문(HTML) 속에 숨겨진 <img> 태그 강제 추출 (ESPN 등이 자주 사용)
+        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary_raw, re.IGNORECASE)
+        if img_match:
+            return img_match.group(1)
+
     except Exception:
         pass
         
@@ -168,13 +186,14 @@ for idx, (category, entries) in enumerate(news_data.items()):
                 with st.container(border=True):
                     title = entry.get('title', '제목 없음')
                     link = entry.get('link', '#')
-                    summary_raw = entry.get('summary', '')
-                    img_url = get_image_url(entry)
+                    # 요약본 데이터 정제
+                    summary_raw = str(entry.get('summary', ''))
                     
-                    # 엑박 방지 적용된 이미지 출력
+                    # 👈 업그레이드된 이미지 추출 함수 적용
+                    img_url = get_image_url(entry, summary_raw)
+                    
                     st.image(img_url, use_container_width=True)
                     
-                    # 카테고리 태그 (기사 원문 링크를 분석하여 스포츠 종목 세분화)
                     prefix = get_category_prefix(title, summary_raw, category, link)
                     display_title = f"{prefix} {title}"
                     
@@ -211,14 +230,12 @@ for idx, (category, entries) in enumerate(news_data.items()):
                             ### 💬 스몰톡 추천 표현
                             (대화를 이어갈 때 쓸만한 유용한 영어 문장 3개와 뜻)
                             """
-                            # 요약 전용 모델(analyzer_model)을 사용하여 사담 차단
                             response = analyzer_model.generate_content(prompt)
                             st.session_state.selected_article = {
                                 "title": display_title, "link": link, "yt_link": yt_link, "ai_analysis": response.text
                             }
                             
                             st.session_state.messages = []
-                            # 채팅 세션은 채팅 전용 모델(chat_model)로 시작
                             st.session_state.chat_session = chat_model.start_chat(history=[
                                 {"role": "user", "parts": [f"Let's talk about this news topic: {title}"]},
                                 {"role": "model", "parts": [f"Sure! I saw that headline. What do you think about it?"]}
@@ -257,7 +274,6 @@ with tabs[-1]:
                         ### 💬 대화 이어가기
                         (이어서 주말 계획이나 점심 메뉴 등으로 화제를 부드럽게 전환하는 유용한 영어 문장 2개와 한국어 뜻)
                         """
-                        # 날씨도 요약 전용 모델 사용
                         response = analyzer_model.generate_content(prompt)
                         
                         st.session_state.selected_article = {
@@ -322,7 +338,6 @@ if st.session_state.selected_article:
                 
             with st.chat_message("assistant"):
                 with st.spinner("동료가 대답을 생각하고 있습니다..."):
-                    # 대화는 채팅용 모델이 담당
                     response = st.session_state.chat_session.send_message(user_input)
                     st.markdown(response.text)
                     
