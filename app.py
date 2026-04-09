@@ -99,46 +99,42 @@ def get_category_prefix(title, summary, category_name, article_link=""):
     else:
         return "📰 [일반]"
 
-def get_image_url(entry, summary_raw):
-    """
-    동영상 대기 화면, 본문 숨김 이미지까지 모두 찾아내는 업그레이드된 함수입니다.
-    """
+def get_image_url(entry):
+    """더 다양한 태그를 스캔하고 파라미터를 제거하여 액박을 방지합니다."""
     fallback_img = "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80"
     
-    try:
-        # 1. 미디어 썸네일 확인 (CNN 등이 자주 사용)
-        if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
-            return entry.media_thumbnail[0].get('url', fallback_img)
-            
-        # 2. 미디어 콘텐츠 확인
-        if 'media_content' in entry and len(entry.media_content) > 0:
-            for media in entry.media_content:
-                # 동영상이더라도 url이 있으면 썸네일일 확률이 높음
-                url = media.get('url', '')
-                if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
-                    return url
+    img_candidates = []
 
-        # 3. 인클로저 확인 (동영상 포스터 이미지가 주로 이곳에 담김)
-        if 'enclosures' in entry:
-            for enc in entry.enclosures:
-                href = enc.get('href', '')
-                if 'image' in enc.get('type', '') or any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']):
-                    return href
-                    
-        # 4. 링크 속성 확인
-        if 'links' in entry:
-            for link in entry.links:
-                if 'image' in link.get('type', ''):
-                    return link.get('href', fallback_img)
+    # 1. media_content 태그 확인
+    if 'media_content' in entry:
+        for content in entry.media_content:
+            if 'url' in content:
+                img_candidates.append(content['url'])
+                
+    # 2. media_thumbnail 태그 확인
+    if 'media_thumbnail' in entry:
+        for thumb in entry.media_thumbnail:
+            if 'url' in thumb:
+                img_candidates.append(thumb['url'])
 
-        # 5. [강력 기능] 기사 본문(HTML) 속에 숨겨진 <img> 태그 강제 추출 (ESPN 등이 자주 사용)
-        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary_raw, re.IGNORECASE)
-        if img_match:
-            return img_match.group(1)
+    # 3. links 항목에서 이미지 타입 확인 (엔터 탭 해결책)
+    if 'links' in entry:
+        for link in entry.links:
+            if 'image' in link.get('type', ''):
+                img_candidates.append(link.get('href', ''))
 
-    except Exception:
-        pass
+    # 후보군 검사
+    for url in img_candidates:
+        if not url: continue
         
+        # 주소 뒤의 쿼리 파라미터(?...) 제거하여 순수 확장자 추출
+        clean_url = url.split('?')[0].lower()
+        
+        if any(ext in clean_url for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
+            # 상대 경로 방지: http로 시작하는지 확인
+            if url.startswith('http'):
+                return url
+                
     return fallback_img
 
 @st.cache_data(ttl=1800)
