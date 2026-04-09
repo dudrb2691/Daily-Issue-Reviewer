@@ -9,7 +9,7 @@ import json
 # ==========================================
 # 1. 초기 설정 및 API 키 불러오기
 # ==========================================
-st.set_page_config(page_title="보스턴 스몰톡 준비", page_icon="🇺🇸", layout="wide") # 카드를 위해 화면을 넓게(wide) 씁니다.
+st.set_page_config(page_title="보스턴 스몰톡 준비", page_icon="🇺🇸", layout="wide")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -18,7 +18,13 @@ except KeyError:
     st.error("오류: Streamlit Secrets에 'GEMINI_API_KEY'가 설정되지 않았습니다.")
     st.stop()
 
-# 챗봇 페르소나
+# ==========================================
+# 2. AI 모델 분리 (매우 중요: 요약용 vs 채팅용)
+# ==========================================
+# [AI 1] 요약/분석 담당: 페르소나 없이 지시받은 양식만 딱딱하게 출력하는 모델
+analyzer_model = genai.GenerativeModel('gemini-3-flash-preview')
+
+# [AI 2] 채팅 담당: 친근한 동료 역할극을 수행하는 모델
 persona = """
 You are a friendly American colleague working at LG Energy Solution Vertech in Westborough, MA. 
 The user is a Korean expat engineer with about 4 years of experience who recently joined your team. 
@@ -27,26 +33,22 @@ Always reply in English. Keep your sentences natural, conversational, and easy t
 If the user makes a grammatical error or uses an awkward expression in English, politely provide a correction at the end of your response like this: 
 "*Tip: Instead of [User's phrase], you can say [Natural phrase].*"
 """
-
-model = genai.GenerativeModel(
-    'gemini-3-flash-preview',
-    system_instruction=persona
-)
+chat_model = genai.GenerativeModel('gemini-3-flash-preview', system_instruction=persona)
 
 # ==========================================
-# 2. 세션 상태 (Session State) 초기화
+# 3. 세션 상태 (Session State) 초기화
 # ==========================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "selected_article" not in st.session_state:
     st.session_state.selected_article = None
 if "chat_session" not in st.session_state:
-    st.session_state.chat_session = model.start_chat(history=[])
+    st.session_state.chat_session = chat_model.start_chat(history=[]) # 채팅용 모델로 초기화
 if "show_chat" not in st.session_state:
     st.session_state.show_chat = False
 
 # ==========================================
-# 3. 보조 함수 (뉴스 수집, 분류, 이미지 추출)
+# 4. 보조 함수 (뉴스 수집, 분류, 이미지 추출)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_news():
@@ -57,7 +59,7 @@ def get_news():
         "🏆 보스턴 스포츠": [
             "https://www.espn.com/espn/rss/nba/news",
             "https://www.espn.com/espn/rss/mlb/news",
-            "https://www.espn.com/espn/rss/nfl/news" # NFL 추가
+            "https://www.espn.com/espn/rss/nfl/news"
         ],
         "🍿 엔터/가십거리": ["http://rss.cnn.com/rss/cnn_showbiz.rss"]
     }
@@ -67,26 +69,24 @@ def get_news():
         combined_entries = []
         for url in urls:
             parsed = feedparser.parse(url)
-            # 출처 URL을 기록해둡니다 (스포츠 리그 판별용)
-            for entry in parsed.entries:
-                entry['source_url'] = url
-            combined_entries.extend(parsed.entries[:10]) # 넉넉히 가져옴
-            
-        # 탭당 9개의 기사를 보여줍니다 (3x3 그리드용)
+            combined_entries.extend(parsed.entries[:10]) 
         results[category] = combined_entries[:9]
     return results
 
-def get_category_prefix(title, summary, category_name, source_url=""):
-    # 스포츠 카테고리인 경우 리그 판별
+def get_category_prefix(title, summary, category_name, article_link=""):
+    """기사 링크와 제목을 분석하여 더 정확한 카테고리를 찾아냅니다."""
     if "스포츠" in category_name:
-        url_lower = source_url.lower()
-        if 'nba' in url_lower: return "🏀 [NBA]"
-        if 'mlb' in url_lower: return "⚾ [MLB]"
-        if 'nfl' in url_lower: return "🏈 [NFL]"
-        if 'nhl' in url_lower: return "🏒 [NHL]"
+        link_lower = article_link.lower()
+        text_lower = (title + " " + summary).lower()
+        
+        if 'nba' in link_lower or 'basketball' in text_lower: return "🏀 [NBA]"
+        if 'mlb' in link_lower or 'baseball' in text_lower: return "⚾ [MLB]"
+        if 'nfl' in link_lower or 'football' in text_lower: return "🏈 [NFL]"
+        if 'nhl' in link_lower or 'hockey' in text_lower: return "🏒 [NHL]"
+        if 'golf' in link_lower or 'masters' in text_lower or 'pga' in text_lower: return "⛳ [골프]"
+        if 'soccer' in link_lower or 'fc' in text_lower or 'premier league' in text_lower: return "⚽ [축구]"
         return "🏅 [스포츠 종합]"
     
-    # 일반 뉴스 카테고리 판별
     text = (title + " " + summary).lower()
     if any(word in text for word in ['market', 'economy', 'stock', 'fed', 'inflation', 'bank', 'business', 'price', 'rates', 'ceo', 'revenue', 'invest']):
         return "📈 [경제]"
@@ -102,12 +102,26 @@ def get_category_prefix(title, summary, category_name, source_url=""):
         return "📰 [일반]"
 
 def get_image_url(entry):
-    """RSS 피드에서 썸네일 이미지 주소를 추출합니다."""
-    if 'media_content' in entry and len(entry.media_content) > 0:
-        return entry.media_content[0]['url']
-    if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
-        return entry.media_thumbnail[0]['url']
-    return "https://via.placeholder.com/400x250.png?text=No+Image+Available"
+    """RSS 피드에서 이미지 주소를 안전하게 추출하고, 없거나 동영상이면 기본 이미지를 띄웁니다."""
+    fallback_img = "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=400&q=80" # 깔끔한 신문/커피 기본 이미지
+    
+    try:
+        # media_content 확인 (확장자가 이미지 형식일 때만 통과)
+        if 'media_content' in entry and len(entry.media_content) > 0:
+            url = entry.media_content[0].get('url', '')
+            if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
+                return url
+        
+        # media_thumbnail 확인
+        if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
+            url = entry.media_thumbnail[0].get('url', '')
+            if any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
+                return url
+                
+    except Exception:
+        pass
+        
+    return fallback_img
 
 @st.cache_data(ttl=1800)
 def get_weather():
@@ -130,57 +144,50 @@ def get_youtube_link(query):
     return None
 
 # ==========================================
-# 4. 상단 UI: 뉴스 및 날씨 목록 (카드형)
+# 5. 상단 UI: 뉴스 및 날씨 목록 (카드형)
 # ==========================================
 st.title("🇺🇸 보스턴 출근길 스몰톡 도우미")
 st.markdown("오늘의 지역 가십거리와 날씨를 파악하고 동료들과 자연스럽게 대화해 보세요!")
 
-# 새로고침 버튼
 col_refresh, _ = st.columns([1, 5])
 with col_refresh:
     if st.button("🔄 최신 기사 새로고침", use_container_width=True):
-        get_news.clear() # 캐시 초기화
+        get_news.clear()
         st.rerun()
 
 news_data = get_news()
 tab_names = list(news_data.keys()) + ["🌤️ 보스턴 날씨"]
 tabs = st.tabs(tab_names)
 
-# --- 1~5번째 탭: 뉴스 영역 (그리드 카드 형태) ---
+# --- 뉴스 영역 ---
 for idx, (category, entries) in enumerate(news_data.items()):
     with tabs[idx]:
-        # 3열로 나누어 카드 뉴스 형태로 배치
         cols = st.columns(3)
         for i, entry in enumerate(entries):
             with cols[i % 3]:
-                # 컨테이너를 테두리 있는 카드 형태로 만듭니다.
                 with st.container(border=True):
                     title = entry.get('title', '제목 없음')
                     link = entry.get('link', '#')
                     summary_raw = entry.get('summary', '')
-                    source_url = entry.get('source_url', '')
                     img_url = get_image_url(entry)
                     
-                    # 썸네일 이미지 표시
+                    # 엑박 방지 적용된 이미지 출력
                     st.image(img_url, use_container_width=True)
                     
-                    # 카테고리 태그 및 제목
-                    prefix = get_category_prefix(title, summary_raw, category, source_url)
+                    # 카테고리 태그 (기사 원문 링크를 분석하여 스포츠 종목 세분화)
+                    prefix = get_category_prefix(title, summary_raw, category, link)
                     display_title = f"{prefix} {title}"
                     
-                    # 제목이 너무 길면 줄입니다.
                     short_title = display_title if len(display_title) < 60 else display_title[:57] + "..."
                     st.markdown(f"**{short_title}**")
                     
-                    # 분석 버튼
                     btn_key = f"btn_news_{idx}_{i}_{title[:10]}"
                     if st.button("분석 💬", key=btn_key, use_container_width=True):
                         with st.spinner("기사 분석 및 배경 지식을 검색하는 중입니다..."):
                             yt_link = get_youtube_link(title)
                             
                             prompt = f"""
-                            당신은 보스턴에 파견된 한국인 주재원의 스몰톡을 돕는 AI입니다.
-                            다음 뉴스 기사 제목과 내용을 바탕으로 지정된 양식에 맞춰 작성해 줘.
+                            다음 뉴스 기사 제목과 내용을 바탕으로 지정된 양식에 맞춰 엄격하게 작성해 줘. (인사말이나 다른 사담은 절대 추가하지 마시오)
                             
                             기사 제목: {title}
                             기사 내용: {summary_raw}
@@ -204,20 +211,22 @@ for idx, (category, entries) in enumerate(news_data.items()):
                             ### 💬 스몰톡 추천 표현
                             (대화를 이어갈 때 쓸만한 유용한 영어 문장 3개와 뜻)
                             """
-                            response = model.generate_content(prompt)
+                            # 요약 전용 모델(analyzer_model)을 사용하여 사담 차단
+                            response = analyzer_model.generate_content(prompt)
                             st.session_state.selected_article = {
                                 "title": display_title, "link": link, "yt_link": yt_link, "ai_analysis": response.text
                             }
                             
                             st.session_state.messages = []
-                            st.session_state.chat_session = model.start_chat(history=[
+                            # 채팅 세션은 채팅 전용 모델(chat_model)로 시작
+                            st.session_state.chat_session = chat_model.start_chat(history=[
                                 {"role": "user", "parts": [f"Let's talk about this news topic: {title}"]},
                                 {"role": "model", "parts": [f"Sure! I saw that headline. What do you think about it?"]}
                             ])
                             st.session_state.show_chat = False
                         st.rerun()
 
-# --- 6번째 탭: 날씨 영역 ---
+# --- 날씨 영역 ---
 with tabs[-1]:
     st.subheader("📍 미국 매사추세츠주 보스턴 (Boston, MA)")
     weather_data = get_weather()
@@ -236,8 +245,7 @@ with tabs[-1]:
                 if st.button("분석 💬", key="btn_weather_analysis", use_container_width=True):
                     with st.spinner("날씨 기반 스몰톡 표현을 준비 중입니다..."):
                         prompt = f"""
-                        당신은 보스턴에 파견된 한국인 주재원의 스몰톡을 돕는 AI입니다.
-                        현재 보스턴의 날씨 데이터(현재 {current_temp}도, 최고 {max_temp}도, 최저 {min_temp}도)를 바탕으로 작성해 줘.
+                        현재 보스턴의 날씨 데이터(현재 {current_temp}도, 최고 {max_temp}도, 최저 {min_temp}도)를 바탕으로 지정된 양식에 맞춰 엄격하게 작성해 줘. (인사말이나 다른 사담은 절대 추가하지 마시오)
 
                         [작성 양식]
                         ### 🌤️ 날씨 상황
@@ -249,7 +257,8 @@ with tabs[-1]:
                         ### 💬 대화 이어가기
                         (이어서 주말 계획이나 점심 메뉴 등으로 화제를 부드럽게 전환하는 유용한 영어 문장 2개와 한국어 뜻)
                         """
-                        response = model.generate_content(prompt)
+                        # 날씨도 요약 전용 모델 사용
+                        response = analyzer_model.generate_content(prompt)
                         
                         st.session_state.selected_article = {
                             "title": f"🌤️ 오늘의 보스턴 날씨 (현재 {current_temp}°C)",
@@ -259,7 +268,7 @@ with tabs[-1]:
                         }
                         
                         st.session_state.messages = []
-                        st.session_state.chat_session = model.start_chat(history=[
+                        st.session_state.chat_session = chat_model.start_chat(history=[
                             {"role": "user", "parts": [f"Let's talk about the weather in Boston today. It's around {current_temp} degrees Celsius."]},
                             {"role": "model", "parts": ["Yeah, the weather today is interesting! How are you finding the Boston weather so far?"]}
                         ])
@@ -271,7 +280,7 @@ with tabs[-1]:
 st.divider()
 
 # ==========================================
-# 5. 하단 UI: 분석 결과 및 챗봇 영역
+# 6. 하단 UI: 분석 결과 및 챗봇 영역
 # ==========================================
 if st.session_state.selected_article:
     article = st.session_state.selected_article
@@ -287,13 +296,13 @@ if st.session_state.selected_article:
     st.write("") 
     
     if not st.session_state.show_chat:
-        if st.button("💬 Gemini와 이 주제로 영어 토론하기", use_container_width=True):
+        if st.button("💬 동료와 이 주제로 영어 토론하기", use_container_width=True):
             st.session_state.show_chat = True
             st.rerun()
 
     if st.session_state.show_chat:
         st.divider()
-        st.subheader("🗣️ 영어 토론")
+        st.subheader("🗣️ 동료와의 대화 (영어)")
         
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
@@ -313,6 +322,7 @@ if st.session_state.selected_article:
                 
             with st.chat_message("assistant"):
                 with st.spinner("동료가 대답을 생각하고 있습니다..."):
+                    # 대화는 채팅용 모델이 담당
                     response = st.session_state.chat_session.send_message(user_input)
                     st.markdown(response.text)
                     
